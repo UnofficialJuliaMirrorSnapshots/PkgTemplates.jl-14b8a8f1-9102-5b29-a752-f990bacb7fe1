@@ -18,10 +18,18 @@ function generate(
         # Create the directory with some boilerplate inside.
         Pkg.generate(pkg_dir)
 
-        # Replace the UUID with something that's compatible with METADATA.
-        project = joinpath(pkg_dir, "Project.toml")
-        uuid = string(Pkg.METADATA_compatible_uuid(pkg))
-        write(project, replace(read(project, String), r"uuid = .*" => "uuid = \"$uuid\""))
+        # Add a [compat] section for Julia.
+        open(joinpath(pkg_dir, "Project.toml"), "a") do io
+            println(io, "\n[compat]\njulia = $(repr_version(t.julia_version))")
+        end
+
+        # Replace the authors field with the template's authors.
+        if !isempty(t.authors)
+            path = joinpath(pkg_dir, "Project.toml")
+            project = read(path, String)
+            authors = string("[", join(map(repr ∘ strip, split(t.authors, ",")), ", "), "]")
+            write(path, replace(project, r"authors = .*" => "authors = $authors"))
+        end
 
         if git
             # Initialize the repo.
@@ -60,7 +68,6 @@ function generate(
         files = vcat(
             "src/", "Project.toml",  # Created by Pkg.generate.
             gen_tests(pkg_dir, t),
-            gen_require(pkg_dir, t),
             gen_readme(pkg_dir, t),
             gen_license(pkg_dir, t),
             vcat(map(p -> gen_plugin(p, t, pkg), values(t.plugins))...),
@@ -167,23 +174,6 @@ function gen_tests(pkg_dir::AbstractString, t::Template)
 end
 
 """
-    gen_require(pkg_dir::AbstractString, t::Template) -> Vector{String}
-
-Create the `REQUIRE` file in `pkg_dir`.
-
-# Arguments
-* `pkg_dir::AbstractString`: The directory in which the files will be generated.
-* `t::Template`: The template whose REQUIRE we are generating.
-
-Returns an array of generated file/directory names.
-"""
-function gen_require(pkg_dir::AbstractString, t::Template)
-    text = "julia $(version_floor(t.julia_version))\n"
-    gen_file(joinpath(pkg_dir, "REQUIRE"), text)
-    return ["REQUIRE"]
-end
-
-"""
     gen_readme(pkg_dir::AbstractString, t::Template) -> Vector{String}
 
 Create a README in `pkg_dir` with badges for each enabled plugin.
@@ -216,6 +206,10 @@ function gen_readme(pkg_dir::AbstractString, t::Template)
             "\n",
         )
     end
+    if haskey(t.plugins, Citation) && t.plugins[Citation].readme_section
+        text *= "\n## Citing\n\nSee `CITATION.bib` for the relevant reference(s).\n"
+    end
+
 
     gen_file(joinpath(pkg_dir, "README.md"), text)
     return ["README.md"]
@@ -353,3 +347,11 @@ function substitute(
 end
 
 splitjl(pkg::AbstractString) = endswith(pkg, ".jl") ? pkg[1:end-3] : pkg
+
+# Format a version in a way suitable for a Project.toml file.
+function repr_version(v::VersionNumber)
+    s = string(v.major)
+    v.minor == 0 || (s *= ".$(v.minor)")
+    v.patch == 0 || (s *= ".$(v.patch)")
+    return repr(s)
+end
